@@ -11,6 +11,9 @@ service cloud.firestore {
     //   - height: number (required)
     //   - targetWeight: number (required)
     //   - unit: string (required, 'metric' | 'imperial')
+    //   - age: number (required)
+    //   - gender: string (required, 'male' | 'female' | 'other')
+    //   - activityLevel: string (required, 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active')
     //   - displayName: string (optional)
     //   - photoURL: string (optional)
     //
@@ -53,10 +56,13 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return hasRequiredFields(['height', 'targetWeight', 'unit']) &&
+      return hasRequiredFields(['height', 'targetWeight', 'unit', 'age', 'gender', 'activityLevel']) &&
              data.height is number && data.height > 0 && data.height < 300 &&
              data.targetWeight is number && data.targetWeight > 0 && data.targetWeight < 500 &&
              data.unit in ['metric', 'imperial'] &&
+             data.age is number && data.age > 0 && data.age < 120 &&
+             data.gender in ['male', 'female', 'other'] &&
+             data.activityLevel in ['sedentary', 'light', 'moderate', 'active', 'very_active'] &&
              (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
              (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 500));
     }

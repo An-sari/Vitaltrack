@@ -69,6 +69,9 @@ interface UserProfile {
   unit: 'metric' | 'imperial';
   displayName?: string;
   photoURL?: string;
+  age: number;
+  gender: 'male' | 'female' | 'other';
+  activityLevel: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
 }
 
 interface WeightLog {
@@ -292,8 +295,13 @@ function MainApp() {
   const [newActivity, setNewActivity] = useState('Cardio');
   const [newDuration, setNewDuration] = useState('30');
   const [newIntensity, setNewIntensity] = useState<'Low' | 'Moderate' | 'High'>('Moderate');
-  const [setupHeight, setSetupHeight] = useState('');
-  const [setupTarget, setSetupTarget] = useState('');
+  const [setupHeight, setSetupHeight] = useState('170');
+  const [setupTarget, setSetupTarget] = useState('70');
+  const [setupAge, setSetupAge] = useState('25');
+  const [setupGender, setSetupGender] = useState<'male' | 'female' | 'other'>('male');
+  const [setupActivity, setSetupActivity] = useState<'sedentary' | 'light' | 'moderate' | 'active' | 'very_active'>('moderate');
+  const [aiTip, setAiTip] = useState<string>('');
+  const [isGeneratingTip, setIsGeneratingTip] = useState(false);
 
   // Auth & Initial Data
   useEffect(() => {
@@ -529,7 +537,10 @@ function MainApp() {
       targetWeight: parseFloat(setupTarget),
       unit: 'metric',
       displayName: user.displayName || '',
-      photoURL: user.photoURL || ''
+      photoURL: user.photoURL || '',
+      age: parseInt(setupAge),
+      gender: setupGender,
+      activityLevel: setupActivity
     };
 
     try {
@@ -586,6 +597,116 @@ function MainApp() {
   const bmi = profile ? calculateBMI(currentWeight, profile.height) : '0';
   const bmiInfo = getBMICategory(parseFloat(bmi));
   
+  // Advanced Analytics Calculations
+  const analytics = useMemo(() => {
+    if (logs.length < 2) return null;
+
+    const sortedLogs = [...logs].sort((a, b) => a.date.getTime() - b.date.getTime());
+    const firstLog = sortedLogs[0];
+    const latestLog = sortedLogs[sortedLogs.length - 1];
+    
+    // Weight Velocity (kg/week)
+    const daysDiff = (latestLog.date.getTime() - firstLog.date.getTime()) / (1000 * 60 * 60 * 24);
+    const weightDiff = firstLog.weight - latestLog.weight;
+    const velocity = daysDiff > 0 ? (weightDiff / (daysDiff / 7)) : 0;
+
+    // Projected Goal Date
+    let projectedDate = null;
+    if (velocity > 0 && profile && latestLog.weight > profile.targetWeight) {
+      const remainingWeight = latestLog.weight - profile.targetWeight;
+      const weeksToGoal = remainingWeight / velocity;
+      projectedDate = new Date(latestLog.date.getTime() + weeksToGoal * 7 * 24 * 60 * 60 * 1000);
+    }
+
+    // Exercise Distribution
+    const intensityCounts = exerciseLogs.reduce((acc, log) => {
+      acc[log.intensity] = (acc[log.intensity] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const exerciseData = Object.entries(intensityCounts).map(([name, value]) => ({ name, value }));
+
+    // Weekly Averages
+    const weeklyData: Record<string, number[]> = {};
+    sortedLogs.forEach(log => {
+      const weekKey = format(log.date, 'yyyy-ww');
+      if (!weeklyData[weekKey]) weeklyData[weekKey] = [];
+      weeklyData[weekKey].push(log.weight);
+    });
+
+    const weeklyAverages = Object.entries(weeklyData).map(([key, weights]) => ({
+      week: key,
+      avg: parseFloat((weights.reduce((a, b) => a + b, 0) / weights.length).toFixed(1))
+    })).slice(-8);
+
+    // BMR & TDEE Calculation
+    let bmr = 0;
+    if (profile && latestLog) {
+      const w = latestLog.weight;
+      const h = profile.height;
+      const a = profile.age;
+      if (profile.gender === 'male') {
+        bmr = 10 * w + 6.25 * h - 5 * a + 5;
+      } else {
+        bmr = 10 * w + 6.25 * h - 5 * a - 161;
+      }
+    }
+
+    const activityFactors = {
+      sedentary: 1.2,
+      light: 1.375,
+      moderate: 1.55,
+      active: 1.725,
+      very_active: 1.9
+    };
+    const tdee = profile ? bmr * activityFactors[profile.activityLevel] : 0;
+
+    // Daily Deficit Estimate
+    const dailyDeficit = (velocity * 7700) / 7;
+
+    return {
+      velocity: velocity.toFixed(2),
+      projectedDate,
+      exerciseData,
+      weeklyAverages,
+      totalExercises: exerciseLogs.length,
+      totalMinutes: exerciseLogs.reduce((acc, l) => acc + l.duration, 0),
+      bmr: Math.round(bmr),
+      tdee: Math.round(tdee),
+      dailyDeficit: Math.round(dailyDeficit)
+    };
+  }, [logs, exerciseLogs, profile]);
+
+  const generateAiTip = async () => {
+    if (!analytics || isGeneratingTip) return;
+    setIsGeneratingTip(true);
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const response = await genAI.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Based on my weight loss data: 
+        - Current weight loss velocity: ${analytics.velocity} kg/week
+        - Total exercises: ${analytics.totalExercises}
+        - Total active minutes: ${analytics.totalMinutes}
+        - Estimated TDEE: ${analytics.tdee} kcal
+        - Estimated daily deficit: ${analytics.dailyDeficit} kcal
+        Provide a 2-sentence motivational and analytical health tip. Keep it concise and professional.`,
+      });
+      setAiTip(response.text || '');
+    } catch (error) {
+      console.error("AI Tip Error:", error);
+    } finally {
+      setIsGeneratingTip(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'analytics' && analytics && !aiTip) {
+      generateAiTip();
+    }
+  }, [activeTab, analytics]);
+
   const chartData = useMemo(() => {
     return [...logs].reverse().map(log => ({
       date: format(log.date, 'MMM d'),
@@ -646,28 +767,72 @@ function MainApp() {
           <p className="text-gray-500 mb-8">Let's set up your profile to start tracking.</p>
           
           <form onSubmit={handleSetup} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Height (cm)</label>
-              <input 
-                type="number" 
-                required
-                value={setupHeight}
-                onChange={(e) => setSetupHeight(e.target.value)}
-                placeholder="e.g. 175"
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black focus:border-transparent outline-none"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Height (cm)</label>
+                <input 
+                  type="number" 
+                  required
+                  value={setupHeight}
+                  onChange={(e) => setSetupHeight(e.target.value)}
+                  placeholder="e.g. 175"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black focus:border-transparent outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Target Weight (kg)</label>
+                <input 
+                  type="number" 
+                  required
+                  value={setupTarget}
+                  onChange={(e) => setSetupTarget(e.target.value)}
+                  placeholder="e.g. 75"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black focus:border-transparent outline-none"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Target Weight (kg)</label>
-              <input 
-                type="number" 
-                required
-                value={setupTarget}
-                onChange={(e) => setSetupTarget(e.target.value)}
-                placeholder="e.g. 75"
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black focus:border-transparent outline-none"
-              />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Age</label>
+                <input 
+                  type="number" 
+                  required
+                  value={setupAge}
+                  onChange={(e) => setSetupAge(e.target.value)}
+                  placeholder="e.g. 30"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black focus:border-transparent outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Gender</label>
+                <select 
+                  value={setupGender}
+                  onChange={(e) => setSetupGender(e.target.value as any)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black focus:border-transparent outline-none bg-white"
+                >
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Activity Level</label>
+              <select 
+                value={setupActivity}
+                onChange={(e) => setSetupActivity(e.target.value as any)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black focus:border-transparent outline-none bg-white"
+              >
+                <option value="sedentary">Sedentary (Office job, little exercise)</option>
+                <option value="light">Lightly Active (Light exercise 1-3 days/week)</option>
+                <option value="moderate">Moderately Active (Moderate exercise 3-5 days/week)</option>
+                <option value="active">Active (Hard exercise 6-7 days/week)</option>
+                <option value="very_active">Very Active (Physical job or training 2x/day)</option>
+              </select>
+            </div>
+
             <Button type="submit" className="w-full">Complete Setup</Button>
           </form>
         </Card>
@@ -866,9 +1031,85 @@ function MainApp() {
               exit={{ opacity: 0, y: -10 }}
               className="space-y-6"
             >
-              <Card className="h-80">
+              {/* AI Insight Card */}
+              <Card className="bg-gradient-to-br from-black to-gray-800 text-white border-none shadow-xl relative overflow-hidden">
+                <div className="relative z-10">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Zap className="w-5 h-5 text-yellow-400 fill-yellow-400" />
+                    <h3 className="font-bold text-sm uppercase tracking-widest opacity-70">AI Health Insight</h3>
+                  </div>
+                  {isGeneratingTip ? (
+                    <div className="flex gap-1">
+                      <div className="w-2 h-2 bg-white/30 rounded-full animate-bounce" />
+                      <div className="w-2 h-2 bg-white/30 rounded-full animate-bounce [animation-delay:0.2s]" />
+                      <div className="w-2 h-2 bg-white/30 rounded-full animate-bounce [animation-delay:0.4s]" />
+                    </div>
+                  ) : (
+                    <p className="text-lg font-medium leading-relaxed italic">
+                      "{aiTip || "Keep logging your data to unlock personalized AI insights."}"
+                    </p>
+                  )}
+                </div>
+                <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full blur-3xl" />
+              </Card>
+
+              {/* Insight Cards Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <Card className="bg-white border-none shadow-sm">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingDown className="w-4 h-4 text-green-500" />
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Velocity</span>
+                  </div>
+                  <div className="text-2xl font-bold">{analytics?.velocity || '0.00'}</div>
+                  <div className="text-[10px] text-gray-400 font-medium">kg lost per week</div>
+                </Card>
+
+                <Card className="bg-white border-none shadow-sm">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-4 h-4 text-blue-500" />
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Projected</span>
+                  </div>
+                  <div className="text-sm font-bold truncate">
+                    {analytics?.projectedDate ? format(analytics.projectedDate, 'MMM d, yyyy') : 'Keep logging'}
+                  </div>
+                  <div className="text-[10px] text-gray-400 font-medium">Estimated goal date</div>
+                </Card>
+              </div>
+
+              {/* Health Profile Bento */}
+              <div className="grid grid-cols-2 gap-4">
+                <Card className="bg-blue-50 border-none shadow-sm">
+                  <div className="text-[10px] font-bold text-blue-400 uppercase tracking-wider mb-1">BMR</div>
+                  <div className="text-xl font-bold text-blue-900">{analytics?.bmr || 0} <span className="text-xs font-normal opacity-60">kcal</span></div>
+                  <div className="text-[9px] text-blue-800/50 font-medium mt-1">Basal Metabolic Rate</div>
+                </Card>
+                <Card className="bg-orange-50 border-none shadow-sm">
+                  <div className="text-[10px] font-bold text-orange-400 uppercase tracking-wider mb-1">TDEE</div>
+                  <div className="text-xl font-bold text-orange-900">{analytics?.tdee || 0} <span className="text-xs font-normal opacity-60">kcal</span></div>
+                  <div className="text-[9px] text-orange-800/50 font-medium mt-1">Total Daily Energy</div>
+                </Card>
+              </div>
+
+              {/* Calorie Insight */}
+              <Card className="bg-green-50 border-none shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] font-bold text-green-500 uppercase tracking-wider mb-1">Estimated Daily Deficit</div>
+                    <div className="text-2xl font-bold text-green-900">-{analytics?.dailyDeficit || 0} <span className="text-sm font-normal opacity-60">kcal</span></div>
+                  </div>
+                  <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                    <Flame className="w-6 h-6 text-green-600" />
+                  </div>
+                </div>
+              </Card>
+
+              {/* Main Weight Trend */}
+              <Card className="h-80 border-none shadow-sm">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="font-bold text-gray-900">Weight Trend</h3>
+                  <div className="flex gap-2">
+                    <div className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded-full uppercase tracking-wider">Last 30 Days</div>
+                  </div>
                 </div>
                 <div className="h-full w-full -ml-4">
                   <ResponsiveContainer width="100%" height="80%">
@@ -892,24 +1133,67 @@ function MainApp() {
                 </div>
               </Card>
 
-              <Card className="h-80">
+              {/* Weekly Averages */}
+              <Card className="h-64 border-none shadow-sm">
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className="font-bold text-gray-900">BMI Progress</h3>
+                  <h3 className="font-bold text-gray-900">Weekly Averages</h3>
                 </div>
                 <div className="h-full w-full -ml-4">
-                  <ResponsiveContainer width="100%" height="80%">
-                    <LineChart data={chartData}>
+                  <ResponsiveContainer width="100%" height="70%">
+                    <BarChart data={analytics?.weeklyAverages || []}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F1F1" />
-                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} />
+                      <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} />
                       <YAxis hide domain={['dataMin - 1', 'dataMax + 1']} />
                       <Tooltip 
                         contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                       />
-                      <Line type="monotone" dataKey="bmi" stroke="#3B82F6" strokeWidth={3} dot={{ r: 4, fill: '#3B82F6' }} />
-                    </LineChart>
+                      <Bar dataKey="avg" fill="#000" radius={[4, 4, 0, 0]} />
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               </Card>
+
+              {/* Exercise Intensity Distribution */}
+              <Card className="border-none shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="font-bold text-gray-900">Workout Intensity</h3>
+                </div>
+                <div className="space-y-4">
+                  {analytics?.exerciseData.length ? analytics.exerciseData.map((item, i) => (
+                    <div key={i} className="space-y-2">
+                      <div className="flex justify-between text-xs font-bold">
+                        <span className="text-gray-500 uppercase tracking-wider">{item.name}</span>
+                        <span>{item.value} sessions</span>
+                      </div>
+                      <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${(item.value / analytics.totalExercises) * 100}%` }}
+                          className={`h-full rounded-full ${
+                            item.name === 'High' ? 'bg-red-500' :
+                            item.name === 'Moderate' ? 'bg-orange-500' :
+                            'bg-blue-500'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="text-center py-4 text-gray-400 text-sm italic">No exercise data available</div>
+                  )}
+                </div>
+              </Card>
+
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-black p-6 rounded-3xl text-white">
+                  <div className="text-xs font-bold opacity-50 uppercase tracking-wider mb-2">Total Workouts</div>
+                  <div className="text-3xl font-bold">{analytics?.totalExercises || 0}</div>
+                </div>
+                <div className="bg-white p-6 rounded-3xl border border-gray-100">
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Active Minutes</div>
+                  <div className="text-3xl font-bold text-gray-900">{analytics?.totalMinutes || 0}</div>
+                </div>
+              </div>
             </motion.div>
           )}
 

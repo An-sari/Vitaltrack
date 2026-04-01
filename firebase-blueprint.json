@@ -9,9 +9,12 @@
         "targetWeight": { "type": "number", "description": "Target weight in kg" },
         "unit": { "type": "string", "enum": ["metric", "imperial"], "description": "Preferred unit system" },
         "displayName": { "type": "string" },
-        "photoURL": { "type": "string" }
+        "photoURL": { "type": "string" },
+        "age": { "type": "number", "description": "Age in years" },
+        "gender": { "type": "string", "enum": ["male", "female", "other"], "description": "Biological gender" },
+        "activityLevel": { "type": "string", "enum": ["sedentary", "light", "moderate", "active", "very_active"], "description": "Daily activity level" }
       },
-      "required": ["height", "targetWeight", "unit"]
+      "required": ["height", "targetWeight", "unit", "age", "gender", "activityLevel"]
     },
     "WeightLog": {
       "title": "Weight Log",
