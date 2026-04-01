@@ -21,7 +21,9 @@ import {
   BarChart3,
   Flame,
   Clock,
-  Zap
+  Zap,
+  Trash2,
+  Edit2
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -58,7 +60,9 @@ import {
   limit,
   Timestamp,
   getDocFromServer,
-  serverTimestamp
+  serverTimestamp,
+  deleteDoc,
+  updateDoc
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
@@ -288,7 +292,9 @@ function MainApp() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showExerciseModal, setShowExerciseModal] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'exercise'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'exercise' | 'profile'>('dashboard');
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [editingLog, setEditingLog] = useState<WeightLog | null>(null);
 
   // Form states
   const [newWeight, setNewWeight] = useState('');
@@ -552,6 +558,53 @@ function MainApp() {
     }
   };
 
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    const updatedProfile: UserProfile = {
+      height: parseFloat(setupHeight),
+      targetWeight: parseFloat(setupTarget),
+      unit: 'metric',
+      displayName: user.displayName || '',
+      photoURL: user.photoURL || '',
+      age: parseInt(setupAge),
+      gender: setupGender,
+      activityLevel: setupActivity
+    };
+
+    try {
+      await setDoc(doc(db, 'users', user.uid), updatedProfile);
+      setProfile(updatedProfile);
+      setShowEditProfileModal(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+    }
+  };
+
+  const handleDeleteLog = async (logId: string) => {
+    if (!user || !window.confirm('Are you sure you want to delete this log?')) return;
+    try {
+      await deleteDoc(doc(db, 'users', user.uid, 'weightLogs', logId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `users/${user.uid}/weightLogs/${logId}`);
+    }
+  };
+
+  const handleUpdateLog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !editingLog) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'weightLogs', editingLog.id), {
+        weight: parseFloat(newWeight),
+        date: editingLog.date // Keep original date for now or allow editing it
+      });
+      setEditingLog(null);
+      setNewWeight('');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/weightLogs/${editingLog.id}`);
+    }
+  };
   const handleAddWeight = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !newWeight) return;
@@ -652,14 +705,14 @@ function MainApp() {
       }
     }
 
-    const activityFactors = {
+    const activityFactors: Record<string, number> = {
       sedentary: 1.2,
       light: 1.375,
       moderate: 1.55,
       active: 1.725,
       very_active: 1.9
     };
-    const tdee = profile ? bmr * activityFactors[profile.activityLevel] : 0;
+    const tdee = profile && profile.activityLevel ? bmr * (activityFactors[profile.activityLevel] || 1.2) : 0;
 
     // Daily Deficit Estimate
     const dailyDeficit = (velocity * 7700) / 7;
@@ -1259,6 +1312,115 @@ function MainApp() {
               </div>
             </motion.div>
           )}
+          {activeTab === 'profile' && (
+            <motion.div 
+              key="profile"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-6"
+            >
+              {/* Profile Overview */}
+              <Card className="p-6">
+                <div className="flex items-center gap-4 mb-6">
+                  <img 
+                    src={user.photoURL || ''} 
+                    alt="Profile" 
+                    className="w-16 h-16 rounded-full border-4 border-white shadow-md"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div>
+                    <h2 className="text-xl font-bold">{user.displayName}</h2>
+                    <p className="text-sm text-gray-400">{user.email}</p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div className="bg-gray-50 p-3 rounded-xl">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Height</div>
+                    <div className="font-bold">{profile?.height} cm</div>
+                  </div>
+                  <div className="bg-gray-50 p-3 rounded-xl">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Target</div>
+                    <div className="font-bold">{profile?.targetWeight} kg</div>
+                  </div>
+                  <div className="bg-gray-50 p-3 rounded-xl">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Age</div>
+                    <div className="font-bold">{profile?.age} yrs</div>
+                  </div>
+                  <div className="bg-gray-50 p-3 rounded-xl">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Activity</div>
+                    <div className="font-bold capitalize">{profile?.activityLevel?.replace('_', ' ') || 'Not set'}</div>
+                  </div>
+                </div>
+
+                <Button 
+                  variant="ghost" 
+                  className="w-full border border-gray-100 hover:bg-gray-50"
+                  onClick={() => {
+                    if (profile) {
+                      setSetupHeight(profile.height.toString());
+                      setSetupTarget(profile.targetWeight.toString());
+                      setSetupAge(profile.age.toString());
+                      setSetupGender(profile.gender);
+                      setSetupActivity(profile.activityLevel);
+                      setShowEditProfileModal(true);
+                    }
+                  }}
+                >
+                  Edit Profile Details
+                </Button>
+              </Card>
+
+              {/* Weight Logs Management */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-gray-900">Weight History</h3>
+                  <span className="text-xs text-gray-400 font-medium">{logs.length} entries</span>
+                </div>
+                <div className="space-y-3">
+                  {logs.map(log => (
+                    <div key={log.id} className="bg-white p-4 rounded-2xl border border-gray-50 flex items-center justify-between shadow-sm group">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                          <Scale className="w-5 h-5 text-blue-500" />
+                        </div>
+                        <div>
+                          <div className="font-bold text-sm">{log.weight} kg</div>
+                          <div className="text-xs text-gray-400">{format(log.date, 'MMM d, yyyy')}</div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={() => {
+                            setEditingLog(log);
+                            setNewWeight(log.weight.toString());
+                          }}
+                          className="p-2 text-gray-400 hover:text-blue-500 transition-colors"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteLog(log.id)}
+                          className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <Button 
+                variant="ghost" 
+                className="w-full text-red-500 hover:bg-red-50 mt-8"
+                onClick={handleLogout}
+              >
+                Sign Out
+              </Button>
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
@@ -1295,11 +1457,11 @@ function MainApp() {
             <span className="text-[10px] font-bold uppercase tracking-wider">Workout</span>
           </button>
           <button 
-            onClick={() => setShowExerciseModal(true)}
-            className="flex flex-col items-center gap-1 text-gray-400 hover:text-black transition-colors"
+            onClick={() => setActiveTab('profile')}
+            className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'profile' ? 'text-black' : 'text-gray-400'}`}
           >
-            <Flame className="w-6 h-6" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Log</span>
+            <UserIcon className="w-6 h-6" />
+            <span className="text-[10px] font-bold uppercase tracking-wider">Profile</span>
           </button>
         </div>
       </div>
@@ -1357,6 +1519,80 @@ function MainApp() {
                 <div className="flex gap-3">
                   <Button variant="outline" className="flex-1" onClick={() => setShowExerciseModal(false)}>Cancel</Button>
                   <Button type="submit" className="flex-1">Save Workout</Button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+        {showEditProfileModal && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center p-0 sm:p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowEditProfileModal(false)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="relative bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
+              <h2 className="text-2xl font-bold mb-6">Edit Profile</h2>
+              <form onSubmit={handleUpdateProfile} className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Height (cm)</label>
+                    <input type="number" required value={setupHeight} onChange={(e) => setSetupHeight(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Target (kg)</label>
+                    <input type="number" required value={setupTarget} onChange={(e) => setSetupTarget(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black outline-none" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Age</label>
+                    <input type="number" required value={setupAge} onChange={(e) => setSetupAge(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Gender</label>
+                    <select value={setupGender} onChange={(e) => setSetupGender(e.target.value as any)} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black outline-none bg-white">
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Activity Level</label>
+                  <select value={setupActivity} onChange={(e) => setSetupActivity(e.target.value as any)} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-black outline-none bg-white">
+                    <option value="sedentary">Sedentary</option>
+                    <option value="light">Lightly Active</option>
+                    <option value="moderate">Moderately Active</option>
+                    <option value="active">Active</option>
+                    <option value="very_active">Very Active</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button variant="outline" className="flex-1" onClick={() => setShowEditProfileModal(false)}>Cancel</Button>
+                  <Button type="submit" className="flex-1">Update Profile</Button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {editingLog && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center p-0 sm:p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setEditingLog(null)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="relative bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl">
+              <h2 className="text-2xl font-bold mb-6">Edit Weight Log</h2>
+              <form onSubmit={handleUpdateLog} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Weight (kg)</label>
+                  <div className="relative">
+                    <input type="number" step="0.1" required autoFocus value={newWeight} onChange={(e) => setNewWeight(e.target.value)} className="w-full px-6 py-4 rounded-2xl border border-gray-200 text-3xl font-bold focus:ring-2 focus:ring-black outline-none" />
+                    <span className="absolute right-6 top-1/2 -translate-y-1/2 text-gray-400 font-medium">kg</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-2">Logged on {format(editingLog.date, 'MMM d, yyyy')}.</div>
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" className="flex-1" onClick={() => setEditingLog(null)}>Cancel</Button>
+                  <Button type="submit" className="flex-1">Update Log</Button>
                 </div>
               </form>
             </motion.div>
