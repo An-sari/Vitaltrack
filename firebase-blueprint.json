@@ -1,0 +1,69 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User's health profile and settings",
+      "type": "object",
+      "properties": {
+        "height": { "type": "number", "description": "Height in cm" },
+        "targetWeight": { "type": "number", "description": "Target weight in kg" },
+        "unit": { "type": "string", "enum": ["metric", "imperial"], "description": "Preferred unit system" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["height", "targetWeight", "unit"]
+    },
+    "WeightLog": {
+      "title": "Weight Log",
+      "description": "A single weight measurement entry",
+      "type": "object",
+      "properties": {
+        "weight": { "type": "number", "description": "Weight in kg" },
+        "date": { "type": "string", "format": "date-time", "description": "Timestamp of the measurement" },
+        "note": { "type": "string", "description": "Optional note" }
+      },
+      "required": ["weight", "date"]
+    },
+    "ExerciseLog": {
+      "title": "Exercise Log",
+      "description": "A single exercise activity entry",
+      "type": "object",
+      "properties": {
+        "activity": { "type": "string", "description": "Type of activity (e.g. Cardio, Strength)" },
+        "duration": { "type": "number", "description": "Duration in minutes" },
+        "intensity": { "type": "string", "enum": ["Low", "Moderate", "High"], "description": "Intensity level" },
+        "date": { "type": "string", "format": "date-time" }
+      },
+      "required": ["activity", "duration", "intensity", "date"]
+    },
+    "Milestone": {
+      "title": "Milestone",
+      "description": "A user-defined or system-generated achievement",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "type": { "type": "string", "enum": ["weight", "time", "custom"] }
+      },
+      "required": ["title", "date", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile document"
+    },
+    "/users/{userId}/weightLogs/{logId}": {
+      "schema": "WeightLog",
+      "description": "Collection of weight logs for a specific user"
+    },
+    "/users/{userId}/exerciseLogs/{exerciseId}": {
+      "schema": "ExerciseLog",
+      "description": "Collection of exercise logs"
+    },
+    "/users/{userId}/milestones/{milestoneId}": {
+      "schema": "Milestone",
+      "description": "Collection of achieved milestones"
+    }
+  }
+}

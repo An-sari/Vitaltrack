@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - height: number (required)
+    //   - targetWeight: number (required)
+    //   - unit: string (required, 'metric' | 'imperial')
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //
+    // Collection: users/{userId}/weightLogs
+    // Document ID: {logId}
+    // Fields:
+    //   - weight: number (required)
+    //   - date: timestamp (required)
+    //   - note: string (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "ayoubabdishakur@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['height', 'targetWeight', 'unit']) &&
+             data.height is number && data.height > 0 && data.height < 300 &&
+             data.targetWeight is number && data.targetWeight > 0 && data.targetWeight < 500 &&
+             data.unit in ['metric', 'imperial'] &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 500));
+    }
+
+    function isValidWeightLog(data) {
+      return hasRequiredFields(['weight', 'date']) &&
+             data.weight is number && data.weight > 0 && data.weight < 500 &&
+             data.date is timestamp &&
+             (!('note' in data) || (data.note is string && data.note.size() < 500));
+    }
+
+    function isValidExerciseLog(data) {
+      return hasRequiredFields(['activity', 'duration', 'intensity', 'date']) &&
+             data.activity is string && data.activity.size() < 100 &&
+             data.duration is number && data.duration > 0 && data.duration < 1440 &&
+             data.intensity in ['Low', 'Moderate', 'High'] &&
+             data.date is timestamp;
+    }
+
+    function isValidMilestone(data) {
+      return hasRequiredFields(['title', 'date', 'type']) &&
+             data.title is string && data.title.size() < 200 &&
+             data.date is timestamp &&
+             data.type in ['weight', 'time', 'custom'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      
+      match /weightLogs/{logId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidWeightLog(request.resource.data);
+        allow update: if isOwner(userId) && isValidWeightLog(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+
+      match /exerciseLogs/{exerciseId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidExerciseLog(request.resource.data);
+        allow update: if isOwner(userId) && isValidExerciseLog(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+
+      match /milestones/{milestoneId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidMilestone(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
